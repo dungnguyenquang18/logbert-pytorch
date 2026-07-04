@@ -1,0 +1,11 @@
+--extra-index-url https://download.pytorch.org/whl/cu121
+torch
+tensorboard
+numpy
+pandas
+pyarrow
+scikit-learn
+matplotlib
+scipy
+tqdm
+pytest

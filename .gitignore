@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+venv/
+outputs/
+*.pt
+*.pkl
+tb_logs/
+.pytest_cache/
