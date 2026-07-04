@@ -56,6 +56,24 @@ def test_fit_decreases_loss_and_writes_artifacts(tmp_path, word_vocab, synthetic
     assert len(list((out / "checkpoints").glob("ckpt_step_*.pt"))) >= 1
 
 
+def test_model_final_loads_into_fresh_model_when_class_weight_was_set(tmp_path, word_vocab,
+                                                                       synthetic_sequences):
+    """class_weight is a training-only buffer (registered as None by default, so it's
+    absent from a fresh model's state_dict). If set_class_weight() was called before
+    training, model_final.pt must still load cleanly into a model that never had it set —
+    this is exactly what scripts/predict.py does."""
+    train_dl, eval_dl = make_loaders(word_vocab, synthetic_sequences)
+    model = make_model(word_vocab)
+    model.set_class_weight(torch.tensor([0.5, 1.5]))
+    t = Trainer(model, train_dl, eval_dl, base_cfg(tmp_path))
+    t.fit()
+
+    state = torch.load(Path(t.cfg.output_dir) / "model_final.pt",
+                       map_location="cpu", weights_only=False)
+    fresh = make_model(word_vocab)
+    fresh.load_state_dict(state["model"])  # must not raise on "class_weight"
+
+
 def test_resume_matches_uninterrupted_run(tmp_path, word_vocab, synthetic_sequences):
     # Run A: 4 epochs straight
     train_dl, eval_dl = make_loaders(word_vocab, synthetic_sequences)

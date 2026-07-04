@@ -6,3 +6,4 @@ outputs/
 *.pkl
 tb_logs/
 .pytest_cache/
+mock_data/

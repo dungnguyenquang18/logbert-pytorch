@@ -204,7 +204,12 @@ class Trainer:
     def _save_final(self):
         if not self.is_main:
             return
-        torch.save({"model": self.raw_model.state_dict(),
+        # class_weight is training-only (loss never applies it in eval mode) and is not
+        # registered on a freshly constructed model, so a fresh load_state_dict would
+        # reject it as an unexpected key.
+        state_dict = {k: v for k, v in self.raw_model.state_dict().items()
+                     if k != "class_weight"}
+        torch.save({"model": state_dict,
                     "config": vars(self.raw_model.cfg)},
                    self.output_dir / "model_final.pt")
         logger.info(f"saved final model to {self.output_dir / 'model_final.pt'}")
