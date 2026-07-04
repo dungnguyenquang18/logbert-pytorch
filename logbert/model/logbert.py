@@ -45,7 +45,10 @@ class LDropout(nn.Module):
         return x * mask
 
 
-class MaskedLogModel(nn.Module):
+class CausalLogModel(nn.Module):
+    """Next-log prediction head. Combined with causal attention (BERT's
+    causal=True), this makes loss_causal a standard autoregressive LM loss,
+    not a bidirectional masked-LM loss."""
     def __init__(self, hidden, vocab_size):
         super().__init__()
         self.linear = nn.Linear(hidden, vocab_size)
@@ -87,10 +90,10 @@ class LogBertClassifier(nn.Module):
         self.interpolate = Interpolate(max_len_seq=cfg.max_seq_len)
         self.classifier = ClassifierHead(hidden=cfg.hidden, max_len_seq=cfg.max_seq_len,
                                          num_classes=cfg.num_labels)
-        self.mask_lm = MaskedLogModel(cfg.hidden, cfg.vocab_size) if cfg.use_mlm else None
+        self.causal_lm_head = CausalLogModel(cfg.hidden, cfg.vocab_size) if cfg.use_causal_lm else None
         self.register_buffer("class_weight", None)
         self.loss_fn = nn.CrossEntropyLoss(reduction="mean")
-        self.mlm_loss_fn = nn.NLLLoss(ignore_index=0)
+        self.causal_loss_fn = nn.NLLLoss(ignore_index=0)
         # Same init the HF post_init applied: normal(0, 0.02) on Linear/Embedding, zero bias.
         # NOTE: this intentionally overwrites ClassifierHead.linear1's constant init,
         # exactly as the old post_init did.
@@ -109,7 +112,7 @@ class LogBertClassifier(nn.Module):
         else:
             self.register_buffer("class_weight", weight.clone())
 
-    def forward(self, input_ids, device_ids=None, labels=None, mlm_labels=None):
+    def forward(self, input_ids, device_ids=None, labels=None, causal_labels=None):
         x = self.bert(input_ids, device_info=device_ids)          # [B, L, H]
 
         attn_mask = (input_ids > 0).float()
@@ -117,7 +120,7 @@ class LogBertClassifier(nn.Module):
         x_norm = self.interpolate.normalize_sequence(x, attn_mask=attn_mask)
         logits = self.classifier(x_norm)
 
-        loss = loss_cls = loss_mlm = loss_l1 = None
+        loss = loss_cls = loss_causal = loss_l1 = None
         if labels is not None:
             if self.training and self.class_weight is not None:
                 loss_cls = nn.functional.cross_entropy(logits, labels,
@@ -128,13 +131,13 @@ class LogBertClassifier(nn.Module):
         if self.cfg.use_l1:
             loss_l1 = torch.norm(self.classifier.linear1.weight, 1)
             loss = loss_l1 * self.cfg.lambda_l1 if loss is None else loss + self.cfg.lambda_l1 * loss_l1
-        if self.mask_lm is not None and mlm_labels is not None:
-            valid = mlm_labels != self.mlm_loss_fn.ignore_index
+        if self.causal_lm_head is not None and causal_labels is not None:
+            valid = causal_labels != self.causal_loss_fn.ignore_index
             if valid.any():
-                loss_mlm = self.mlm_loss_fn(self.mask_lm(x).transpose(1, 2), mlm_labels)
+                loss_causal = self.causal_loss_fn(self.causal_lm_head(x).transpose(1, 2), causal_labels)
             else:
-                loss_mlm = x.new_zeros(())
-            loss = loss_mlm if loss is None else loss + self.cfg.alpha_mlm * loss_mlm
+                loss_causal = x.new_zeros(())
+            loss = loss_causal if loss is None else loss + self.cfg.alpha_causal_lm * loss_causal
 
         return {"logits": logits, "loss": loss,
-                "loss_cls": loss_cls, "loss_mlm": loss_mlm, "loss_l1": loss_l1}
+                "loss_cls": loss_cls, "loss_causal": loss_causal, "loss_l1": loss_l1}

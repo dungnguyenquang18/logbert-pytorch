@@ -66,7 +66,7 @@ python scripts/predict.py --config configs/<your_config>.py --model outputs/<exp
 ```
 
 ### 3. Plot Loss Curves
-Plots train/valid loss (total, cls, l1, mlm) from `history.json`:
+Plots train/valid loss (total, cls, l1, causal) from `history.json`:
 ```bash
 python scripts/plot_loss.py --history outputs/<exp>/history.json --output-dir outputs/<exp>/plots/
 ```

@@ -112,11 +112,11 @@ class Trainer:
         batch = {k: v.to(self.device, non_blocking=True) for k, v in batch.items()}
         with torch.autocast("cuda", dtype=torch.bfloat16, enabled=self.autocast_enabled):
             return self.model(input_ids=batch["input_ids"], device_ids=batch["device_ids"],
-                              labels=batch["labels"], mlm_labels=batch["mlm_labels"])
+                              labels=batch["labels"], causal_labels=batch["causal_labels"])
 
     @staticmethod
     def _accumulate(sums: dict, out: dict):
-        for key in ("loss", "loss_cls", "loss_mlm", "loss_l1"):
+        for key in ("loss", "loss_cls", "loss_causal", "loss_l1"):
             if out.get(key) is not None:
                 sums[key] = sums.get(key, 0.0) + out[key].detach().float().item()
 
@@ -126,7 +126,7 @@ class Trainer:
         self.model.train()                       # train-mode loss, but no backward
         with torch.no_grad():
             out = self._forward(next(iter(self.train_loader)))
-            for key in ("loss", "loss_cls", "loss_mlm", "loss_l1"):
+            for key in ("loss", "loss_cls", "loss_causal", "loss_l1"):
                 if out.get(key) is not None:
                     entry[f"initial_train_{key}" if key != "loss" else "initial_train_loss"] = \
                         out[key].detach().float().item()
@@ -134,7 +134,7 @@ class Trainer:
             self.model.eval()
             with torch.no_grad():
                 out = self._forward(next(iter(self.eval_loader)))
-                for key in ("loss", "loss_cls", "loss_mlm", "loss_l1"):
+                for key in ("loss", "loss_cls", "loss_causal", "loss_l1"):
                     if out.get(key) is not None:
                         entry[f"initial_eval_{key}" if key != "loss" else "initial_eval_loss"] = \
                             out[key].detach().float().item()

@@ -97,20 +97,20 @@ class LogCollator:
         if self.seq_len is not None:
             cap = min(cap, self.seq_len)
         pad = self.vocab.pad_index
-        input_ids, mlm_labels, device_ids, labels, window_end = [], [], [], [], []
+        input_ids, causal_labels, device_ids, labels, window_end = [], [], [], [], []
         for s in samples:
             k = s["tokens"][:cap]
             lab = k[1:] + [self.vocab.eos_index]          # next-token target
             d = s["device_ids"][:cap]
             npad = cap - len(k)
             input_ids.append(k + [pad] * npad)
-            mlm_labels.append(lab + [pad] * npad)
+            causal_labels.append(lab + [pad] * npad)
             device_ids.append(d + [pad] * (cap - len(d)))
             labels.append(s["label"])
             window_end.append(s["window_end"])
         return {
             "input_ids": torch.tensor(input_ids, dtype=torch.long),
-            "mlm_labels": torch.tensor(mlm_labels, dtype=torch.long),
+            "causal_labels": torch.tensor(causal_labels, dtype=torch.long),
             "device_ids": torch.tensor(device_ids, dtype=torch.long),
             "labels": torch.tensor(labels, dtype=torch.long),
             "window_end": torch.tensor(window_end, dtype=torch.long),

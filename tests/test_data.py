@@ -29,15 +29,15 @@ def test_collator_causal_labels_and_padding(word_vocab, synthetic_sequences):
     batch = coll(samples)
     L = max(len(s["tokens"]) for s in samples)
     assert batch["input_ids"].shape == (4, L)
-    for key in ("input_ids", "mlm_labels", "device_ids"):
+    for key in ("input_ids", "causal_labels", "device_ids"):
         assert batch[key].shape == (4, L) and batch[key].dtype == torch.long
     assert batch["labels"].shape == (4,) and batch["window_end"].shape == (4,)
     # causal shift: label[i] == input[i+1] on valid positions
     n0 = len(samples[0]["tokens"])
-    assert batch["mlm_labels"][0, : n0 - 1].tolist() == batch["input_ids"][0, 1:n0].tolist()
-    assert batch["mlm_labels"][0, n0 - 1].item() == word_vocab.eos_index
+    assert batch["causal_labels"][0, : n0 - 1].tolist() == batch["input_ids"][0, 1:n0].tolist()
+    assert batch["causal_labels"][0, n0 - 1].item() == word_vocab.eos_index
     if n0 < L:  # padding is 0
-        assert batch["mlm_labels"][0, n0:].sum().item() == 0
+        assert batch["causal_labels"][0, n0:].sum().item() == 0
         assert batch["input_ids"][0, n0:].sum().item() == 0
 
 

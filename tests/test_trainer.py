@@ -26,7 +26,7 @@ def make_model(word_vocab):
     torch.manual_seed(42)
     return LogBertClassifier(ModelConfig(vocab_size=len(word_vocab), hidden=32, layers=1,
                                          attn_heads=2, max_seq_len=64, causal=True,
-                                         use_mlm=True, use_l1=True, is_device=False,
+                                         use_causal_lm=True, use_l1=True, is_device=False,
                                          num_devices=6))
 
 

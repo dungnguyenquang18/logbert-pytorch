@@ -28,7 +28,7 @@ def test_generate_creates_loadable_artifacts(tmp_path):
     # the whole thing must flow through Dataset + Collator
     ds = LogSequenceDataset(train, vocab=vocab)
     batch = LogCollator(vocab=vocab, seq_len=64)([ds[i] for i in range(8)])
-    assert batch["input_ids"].shape == batch["mlm_labels"].shape
+    assert batch["input_ids"].shape == batch["causal_labels"].shape
     assert batch["labels"].dtype == torch.long and batch["labels"].shape == (8,)
 
 

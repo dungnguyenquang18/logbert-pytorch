@@ -1,3 +1,3 @@
-from .logbert import BERT, ClassifierHead, LDropout, LogBertClassifier, MaskedLogModel
+from .logbert import BERT, CausalLogModel, ClassifierHead, LDropout, LogBertClassifier
 
-__all__ = ["BERT", "ClassifierHead", "LDropout", "LogBertClassifier", "MaskedLogModel"]
+__all__ = ["BERT", "CausalLogModel", "ClassifierHead", "LDropout", "LogBertClassifier"]

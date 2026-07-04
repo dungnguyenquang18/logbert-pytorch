@@ -13,9 +13,9 @@ class ModelConfig:
     max_seq_len: int = 36000           # ClassifierHead/Interpolate normalize to max_seq_len - 1
     dropout: float = 0.1
     causal: bool = True
-    use_mlm: bool = True               # next-log prediction head
+    use_causal_lm: bool = True         # next-log (causal LM) prediction head
     use_l1: bool = True                # L1 penalty on classifier.linear1
-    alpha_mlm: float = 0.1             # weight of MLM loss (was hardcoded 0.1 in old modeling.py:176)
+    alpha_causal_lm: float = 0.1       # weight of causal LM loss (was hardcoded 0.1 in old modeling.py:176)
     lambda_l1: float = 1e-4            # weight of L1 loss (was hardcoded 1e-4 in old modeling.py:157)
     num_labels: int = 2
     is_device: bool = False

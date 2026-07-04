@@ -11,8 +11,8 @@ A data type module provides two things:
    BucketBatchSampler can bucket by length without touching items.
 
 2. A collator, Callable[[list[dict]], dict[str, Tensor]], producing:
-       input_ids   LongTensor [B, L]
-       mlm_labels  LongTensor [B, L]   next-token labels, pad = 0
+       input_ids     LongTensor [B, L]
+       causal_labels LongTensor [B, L]   next-token labels, pad = 0
        device_ids  LongTensor [B, L]
        labels      LongTensor [B]
        window_end  LongTensor [B]
