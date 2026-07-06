@@ -3,8 +3,8 @@ from logbert.config import ModelConfig, DataConfig, TrainConfig
 def test_model_config_defaults():
     m = ModelConfig(vocab_size=100)
     assert m.hidden == 256 and m.layers == 1 and m.attn_heads == 4
-    assert m.causal is True and m.use_causal_lm is True and m.use_l1 is True
-    assert m.alpha_causal_lm == 0.1 and m.lambda_l1 == 1e-4
+    assert m.causal is True and m.use_causal_lm is True
+    assert m.alpha_causal_lm == 0.1
     assert m.max_seq_len == 36000 and m.num_labels == 2
     assert m.is_device is False and m.num_devices == 1
 

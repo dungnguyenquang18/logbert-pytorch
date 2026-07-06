@@ -11,8 +11,8 @@ from logbert.config import DataConfig, ModelConfig, TrainConfig
 model = ModelConfig(
     vocab_size=0,              # filled at runtime from vocab.pkl
     hidden=32, layers=1, attn_heads=2,
-    max_seq_len=64, causal=True, use_causal_lm=True, use_l1=True,
-    alpha_causal_lm=0.1, lambda_l1=1e-4, is_device=False,
+    max_seq_len=64, causal=True, use_causal_lm=True,
+    alpha_causal_lm=0.1, is_device=False,
 )
 
 data = DataConfig(

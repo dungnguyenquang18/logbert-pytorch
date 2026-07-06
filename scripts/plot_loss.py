@@ -144,16 +144,12 @@ def main(history_path: str, output_dir: str):
     cls_df = _to_dataframe(log_history,
                            train_keys=["train_loss_cls", "initial_train_loss_cls"],
                            eval_keys=["eval_loss_cls", "initial_eval_loss_cls"])
-    l1_df = _to_dataframe(log_history,
-                          train_keys=["train_loss_l1", "initial_train_loss_l1"],
-                          eval_keys=["eval_loss_l1", "initial_eval_loss_l1"])
     causal_df = _to_dataframe(log_history,
                               train_keys=["train_loss_causal", "initial_train_loss_causal"],
                               eval_keys=["eval_loss_causal", "initial_eval_loss_causal"])
 
     _plot_train_valid_subplots(total_df, "Total Loss", output_dir / "total_loss.png")
     _plot_train_valid_subplots(cls_df, "CLS Loss", output_dir / "cls_loss.png")
-    _plot_combined(l1_df, "L1 Loss", output_dir / "l1_loss.png")
     _plot_combined(causal_df, "Causal Loss", output_dir / "causal_loss.png")
     print(f"Saved plots to: {output_dir.resolve()}")
 

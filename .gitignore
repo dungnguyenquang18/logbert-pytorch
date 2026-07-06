@@ -7,3 +7,4 @@ outputs/
 tb_logs/
 .pytest_cache/
 mock_data/
+docs/superpowers/

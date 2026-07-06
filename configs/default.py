@@ -6,8 +6,8 @@ _OLD = "/home/dungnq/study/5Y1S/meobtnx/DeviceIncidents/output_dungnq57_v2.7.8"
 model = ModelConfig(
     vocab_size=0,          # filled at runtime from vocab.pkl
     hidden=256, layers=1, attn_heads=4,
-    max_seq_len=36000, causal=True, use_causal_lm=True, use_l1=True,
-    alpha_causal_lm=0.1, lambda_l1=1e-4, is_device=False,
+    max_seq_len=36000, causal=True, use_causal_lm=True,
+    alpha_causal_lm=0.1, is_device=False,
 )
 
 data = DataConfig(

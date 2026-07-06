@@ -3,7 +3,6 @@ import torch.nn as nn
 
 from ..config import ModelConfig
 from .embedding import BERTEmbedding
-from .interpolate import Interpolate
 from .transformer import TransformerBlock
 
 
@@ -31,18 +30,23 @@ class BERT(nn.Module):
         return x
 
 
-class LDropout(nn.Module):
-    """Drops whole positions of the [B, H, L] classifier input."""
-    def __init__(self, p):
-        super().__init__()
-        self.p = p
+class AttentionPooling(nn.Module):
+    """Content-based pooling trên trục L. Thay {Interpolate + linear1}.
+    Length-agnostic: [B,L,H] → [B,H] kèm α [B,L] = điểm quan trọng mỗi token."""
 
-    def forward(self, x):
-        if not self.training or self.p == 0:
-            return x
-        B, H, L = x.shape
-        mask = (torch.rand(B, 1, L, device=x.device) > self.p).float()
-        return x * mask
+    def __init__(self, hidden):
+        super().__init__()
+        self.score = nn.Linear(hidden, 1, bias=False)   # weight: [1, hidden]
+
+    def forward(self, x, attn_mask):           # x:[B,L,H]; attn_mask:[B,L] (1=valid, 0=pad/SOS)
+        scores = self.score(x).squeeze(-1)                  # [B, L]
+        scores = scores.masked_fill(attn_mask == 0, float("-inf"))
+        alpha  = torch.softmax(scores, dim=1)               # [B, L]
+        pooled = torch.einsum("bl,blh->bh", alpha, x)       # [B, H]
+        return pooled, alpha
+
+    def init_as_avg_pooling(self):
+        nn.init.zeros_(self.score.weight)   # score ≡ 0 → softmax đều → average pooling ở step 0
 
 
 class CausalLogModel(nn.Module):
@@ -58,24 +62,6 @@ class CausalLogModel(nn.Module):
         return self.softmax(self.linear(x))
 
 
-class ClassifierHead(nn.Module):
-    """Aggregates the L dimension with a learned linear filter (whose weights are
-    the per-position influence scores used for root-cause analysis)."""
-    def __init__(self, hidden, max_len_seq, num_classes=2):
-        super().__init__()
-        self.max_len_seq = max_len_seq - 1
-        self.dropout1 = LDropout(0.1)
-        self.linear1 = nn.Linear(self.max_len_seq, 1)
-        self.dropout2 = nn.Dropout(0.1)
-        self.linear2 = nn.Linear(hidden, num_classes)
-
-    def forward(self, x):                 # x: [B, L, H]
-        x = x.transpose(1, 2)             # [B, H, L]
-        x = self.dropout1(x)
-        x = self.linear1(x).squeeze(-1)   # [B, H]
-        return self.linear2(self.dropout2(x))
-
-
 class LogBertClassifier(nn.Module):
     """Top-level model. Replaces HF LogBertForSequenceClassification;
     forward returns a plain dict instead of SequenceClassifierOutput."""
@@ -87,9 +73,9 @@ class LogBertClassifier(nn.Module):
                          n_layers=cfg.layers, attn_heads=cfg.attn_heads, dropout=cfg.dropout,
                          is_logkey=True, is_time=False, is_device=cfg.is_device,
                          num_devices=cfg.num_devices, causal=cfg.causal)
-        self.interpolate = Interpolate(max_len_seq=cfg.max_seq_len)
-        self.classifier = ClassifierHead(hidden=cfg.hidden, max_len_seq=cfg.max_seq_len,
-                                         num_classes=cfg.num_labels)
+        self.pool = AttentionPooling(cfg.hidden)
+        self.dropout = nn.Dropout(cfg.dropout)
+        self.cls_head = nn.Linear(cfg.hidden, cfg.num_labels)
         self.causal_lm_head = CausalLogModel(cfg.hidden, cfg.vocab_size) if cfg.use_causal_lm else None
         self.register_buffer("class_weight", None)
         self.loss_fn = nn.CrossEntropyLoss(reduction="mean")
@@ -98,6 +84,7 @@ class LogBertClassifier(nn.Module):
         # NOTE: this intentionally overwrites ClassifierHead.linear1's constant init,
         # exactly as the old post_init did.
         self.apply(self._init_weights)
+        self.pool.init_as_avg_pooling()
 
     @staticmethod
     def _init_weights(module):
@@ -117,10 +104,10 @@ class LogBertClassifier(nn.Module):
 
         attn_mask = (input_ids > 0).float()
         attn_mask[:, 0] = 0                                        # drop SOS position
-        x_norm = self.interpolate.normalize_sequence(x, attn_mask=attn_mask)
-        logits = self.classifier(x_norm)
+        pooled, alpha = self.pool(x, attn_mask)
+        logits = self.cls_head(self.dropout(pooled))
 
-        loss = loss_cls = loss_causal = loss_l1 = None
+        loss = loss_cls = loss_causal = None
         if labels is not None:
             if self.training and self.class_weight is not None:
                 loss_cls = nn.functional.cross_entropy(logits, labels,
@@ -128,9 +115,6 @@ class LogBertClassifier(nn.Module):
             else:
                 loss_cls = self.loss_fn(logits, labels)
             loss = loss_cls
-        if self.cfg.use_l1:
-            loss_l1 = torch.norm(self.classifier.linear1.weight, 1)
-            loss = loss_l1 * self.cfg.lambda_l1 if loss is None else loss + self.cfg.lambda_l1 * loss_l1
         if self.causal_lm_head is not None and causal_labels is not None:
             valid = causal_labels != self.causal_loss_fn.ignore_index
             if valid.any():
@@ -140,4 +124,5 @@ class LogBertClassifier(nn.Module):
             loss = loss_causal if loss is None else loss + self.cfg.alpha_causal_lm * loss_causal
 
         return {"logits": logits, "loss": loss,
-                "loss_cls": loss_cls, "loss_causal": loss_causal, "loss_l1": loss_l1}
+                "loss_cls": loss_cls, "loss_causal": loss_causal, "attn_weights": alpha}
+

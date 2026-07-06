@@ -116,7 +116,7 @@ class Trainer:
 
     @staticmethod
     def _accumulate(sums: dict, out: dict):
-        for key in ("loss", "loss_cls", "loss_causal", "loss_l1"):
+        for key in ("loss", "loss_cls", "loss_causal"):
             if out.get(key) is not None:
                 sums[key] = sums.get(key, 0.0) + out[key].detach().float().item()
 
@@ -126,7 +126,7 @@ class Trainer:
         self.model.train()                       # train-mode loss, but no backward
         with torch.no_grad():
             out = self._forward(next(iter(self.train_loader)))
-            for key in ("loss", "loss_cls", "loss_causal", "loss_l1"):
+            for key in ("loss", "loss_cls", "loss_causal"):
                 if out.get(key) is not None:
                     entry[f"initial_train_{key}" if key != "loss" else "initial_train_loss"] = \
                         out[key].detach().float().item()
@@ -134,7 +134,7 @@ class Trainer:
             self.model.eval()
             with torch.no_grad():
                 out = self._forward(next(iter(self.eval_loader)))
-                for key in ("loss", "loss_cls", "loss_causal", "loss_l1"):
+                for key in ("loss", "loss_cls", "loss_causal"):
                     if out.get(key) is not None:
                         entry[f"initial_eval_{key}" if key != "loss" else "initial_eval_loss"] = \
                             out[key].detach().float().item()

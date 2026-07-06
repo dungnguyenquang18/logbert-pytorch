@@ -17,12 +17,12 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("visualize_weights")
 
 
-def analyze_linear1_weights(model, logger=None, save_path=None, num_bins=50):
-    w = model.classifier.linear1.weight.detach().float().view(-1).cpu()
+def analyze_score_weights(model, logger=None, save_path=None, num_bins=50):
+    w = model.pool.score.weight.detach().float().view(-1).cpu()
 
     w_sum = torch.norm(w, 1)
     if logger:
-        logger.info(f"[linear1] sum={w_sum:.6f}")
+        logger.info(f"[score] sum={w_sum:.6f}")
 
     w_min = w.min().item()
     w_max = w.max().item()
@@ -31,10 +31,10 @@ def analyze_linear1_weights(model, logger=None, save_path=None, num_bins=50):
     q = torch.quantile(w, torch.tensor([0.0, 0.25, 0.5, 0.75, 1.0]))
 
     if logger:
-        logger.info(f"[linear1] shape={tuple(model.classifier.linear1.weight.shape)}")
-        logger.info(f"[linear1] min={w_min:.6f}, max={w_max:.6f}, mean={w_mean:.6f}, std={w_std:.6f}")
+        logger.info(f"[score] shape={tuple(model.pool.score.weight.shape)}")
+        logger.info(f"[score] min={w_min:.6f}, max={w_max:.6f}, mean={w_mean:.6f}, std={w_std:.6f}")
         logger.info(
-            f"[linear1] q0={q[0].item():.6f}, q25={q[1].item():.6f}, "
+            f"[score] q0={q[0].item():.6f}, q25={q[1].item():.6f}, "
             f"q50={q[2].item():.6f}, q75={q[3].item():.6f}, q100={q[4].item():.6f}"
         )
 
@@ -43,15 +43,20 @@ def analyze_linear1_weights(model, logger=None, save_path=None, num_bins=50):
 
     n, bins, patches = ax.hist(w_np, bins=num_bins, density=True, alpha=0.75, color="#4C72B0", edgecolor="none")
 
-    from scipy.stats import gaussian_kde
-    kde = gaussian_kde(w_np, bw_method="scott")
-    xs = np.linspace(w_min, w_max, 300)
-    ax.plot(xs, kde(xs), color="#C44E52", linewidth=1.6, label="KDE")
+    # Guard against zero variance or single value in KDE estimation
+    if len(w_np) > 1 and w_std > 1e-9:
+        try:
+            from scipy.stats import gaussian_kde
+            kde = gaussian_kde(w_np, bw_method="scott")
+            xs = np.linspace(w_min, w_max, 300)
+            ax.plot(xs, kde(xs), color="#C44E52", linewidth=1.6, label="KDE")
+        except Exception:
+            pass
 
     ax.axvline(w_mean,   color="#DD8452", linewidth=1.2, linestyle="--", label=f"Mean   {w_mean:.4f}")
     ax.axvline(q[2].item(), color="#55A868", linewidth=1.2, linestyle=":",  label=f"Median {q[2].item():.4f}")
 
-    ax.set_title("Weight Distribution — linear1", fontsize=13, pad=10)
+    ax.set_title("Weight Distribution — score", fontsize=13, pad=10)
     ax.set_xlabel("Weight value", fontsize=11)
     ax.set_ylabel("Density", fontsize=11)
     ax.legend(framealpha=0.5, fontsize=9)
@@ -74,8 +79,8 @@ def main(model_path: str, output_dir: str):
     model = LogBertClassifier(ModelConfig(**state["config"]))
     model.load_state_dict(state["model"])
     model.eval()
-    analyze_linear1_weights(model, logger=logger,
-                            save_path=os.path.join(output_dir, "linear1_hist.png"))
+    analyze_score_weights(model, logger=logger,
+                          save_path=os.path.join(output_dir, "score_weight_hist.png"))
 
 
 if __name__ == "__main__":

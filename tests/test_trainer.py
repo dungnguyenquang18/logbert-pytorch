@@ -26,7 +26,7 @@ def make_model(word_vocab):
     torch.manual_seed(42)
     return LogBertClassifier(ModelConfig(vocab_size=len(word_vocab), hidden=32, layers=1,
                                          attn_heads=2, max_seq_len=64, causal=True,
-                                         use_causal_lm=True, use_l1=True, is_device=False,
+                                         use_causal_lm=True, is_device=False,
                                          num_devices=6))
 
 
@@ -51,7 +51,7 @@ def test_fit_decreases_loss_and_writes_artifacts(tmp_path, word_vocab, synthetic
     assert len(initial) == 1 and initial[0]["step"] == 0
     assert len(evals) == 2                          # eval_every=0 → once per epoch
     assert evals[-1]["eval_loss"] < initial[0]["initial_eval_loss"]  # it learned
-    assert "eval_loss_cls" in evals[-1] and "eval_loss_l1" in evals[-1]
+    assert "eval_loss_cls" in evals[-1]
     assert (out / "model_final.pt").exists()
     assert len(list((out / "checkpoints").glob("ckpt_step_*.pt"))) >= 1
 
