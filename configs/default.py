@@ -21,5 +21,5 @@ data = DataConfig(
 
 train = TrainConfig(
     output_dir="outputs/default/",
-    epochs=20, lr=5e-5, grad_accum_steps=32, bf16=True,
+    epochs=3, lr=5e-5, grad_accum_steps=32, bf16=True,
 )

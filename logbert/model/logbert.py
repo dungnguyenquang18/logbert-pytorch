@@ -42,7 +42,7 @@ class AttentionPooling(nn.Module):
         scores = self.score(x).squeeze(-1)                  # [B, L]
         scores = scores.masked_fill(attn_mask == 0, float("-inf"))
         alpha  = torch.softmax(scores, dim=1)               # [B, L]
-        pooled = torch.einsum("bl,blh->bh", alpha, x)       # [B, H]
+        pooled = (alpha.unsqueeze(-1) * x).sum(dim=1)   # [B,L,1] * [B,L,H] → [B,L,H] → sum L → [B,H]
         return pooled, alpha
 
     def init_as_avg_pooling(self):

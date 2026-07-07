@@ -18,9 +18,24 @@ def load_pkl_dir(folder_path: str) -> list:
     return seqs
 
 
+def _to_unix(window):
+    """Window end may be a list `[ts]`, a scalar unix int, or a pandas/py
+    Timestamp. Return a unix-seconds int (0 if unavailable)."""
+    if isinstance(window, (list, tuple)):
+        window = window[0] if window else 0
+    if window is None or (isinstance(window, int) and window == 0):
+        return 0
+    if hasattr(window, "timestamp"):          # pandas Timestamp / datetime
+        return int(window.timestamp())
+    return int(window)
+
+
 def _normalize_tuple(item):
+    # print(f"Normalizing sequence tuple: {len(item)}")
     """PKL tuples come as (tokens, window, dev, label) with 2/3-element variants."""
-    if len(item) == 4:
+    if len(item) == 5:
+        k, window, d, y, _ = item
+    elif len(item) == 4:
         k, window, d, y = item
     elif len(item) == 3:
         k, window, d = item
@@ -73,17 +88,29 @@ class LogSequenceDataset(Dataset):
                 out.append(self._to_id(tok))
         return out
 
+    def _build_device_ids(self, d, n):
+        """Align device ids to the `n` tokens.
+
+        `d` may be a per-token sequence of device ids (synthetic mock format)
+        or a single device id for the whole sequence (real PKL format)."""
+        if isinstance(d, (list, tuple)):
+            seq = list(d)
+            dev_cls = seq[0] if seq else 0
+            ids = [dev_cls] + seq[: n - 1]
+        else:
+            ids = [d] * n
+        ids += [self.vocab.pad_index] * (n - len(ids))
+        return ids[:n]
+
     def __getitem__(self, idx):
         k, window, d, y = _normalize_tuple(self.sequences[idx])
         tokens = [self.vocab.sos_index] + self._mask_inputs(k)
-        dev_cls = d[0] if len(d) > 0 else 0
-        device_ids = [dev_cls] + list(d[: len(tokens) - 1])
-        device_ids += [self.vocab.pad_index] * (len(tokens) - len(device_ids))
+        device_ids = self._build_device_ids(d, len(tokens))
         return {
             "tokens": tokens,
             "device_ids": device_ids,
             "label": y,
-            "window_end": int(window[0]) if window else 0,
+            "window_end": _to_unix(window),
         }
 
 

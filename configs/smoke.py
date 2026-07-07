@@ -26,7 +26,7 @@ data = DataConfig(
 
 train = TrainConfig(
     output_dir="outputs/smoke/",
-    epochs=15, lr=3e-3, grad_accum_steps=1, bf16=True,
-    log_every=10, eval_every=0, save_every=0, save_total_limit=2,
+    epochs=3, lr=3e-3, grad_accum_steps=4, bf16=True,
+    log_every=100, eval_every=0, save_every=0, save_total_limit=2,
     early_stop_patience=10, min_delta=0.0,
 )
