@@ -26,6 +26,7 @@ def make_batch(B=4, L=20, vocab=30):
 
 def test_forward_returns_all_components():
     m = LogBertClassifier(small_cfg())
+    m.eval()  # attn_dropout must be off for the exact Σα=1 check below
     batch = make_batch()
     out = m(**batch)
     assert out["logits"].shape == (4, 2)
@@ -97,7 +98,8 @@ def test_attention_pooling_init_as_avg_pooling():
     
     pool = AttentionPooling(H)
     pool.init_as_avg_pooling()
-    
+    pool.eval()  # attn_dropout must be off for the exact avg-pooling equality check below
+
     pooled, alpha = pool(x, attn_mask)
     
     expected_alpha = attn_mask / attn_mask.sum(dim=1, keepdim=True)
@@ -105,4 +107,23 @@ def test_attention_pooling_init_as_avg_pooling():
     
     assert torch.allclose(alpha, expected_alpha, atol=1e-6)
     assert torch.allclose(pooled, expected_pooled, atol=1e-6)
+
+
+def test_attention_pooling_dropout_active_in_train_mode():
+    from logbert.model import AttentionPooling
+    torch.manual_seed(0)
+    B, L, H = 4, 10, 8
+    x = torch.randn(B, L, H)
+    attn_mask = torch.ones(B, L)
+
+    pool = AttentionPooling(H, dropout=0.5)
+    pool.train()
+    _, alpha = pool(x, attn_mask)
+    # attn_dropout zeroes some weights at train time, so Σα drifts from 1
+    assert not torch.allclose(alpha.sum(dim=1), torch.ones(B), atol=1e-6)
+
+    pool.eval()
+    _, alpha_eval = pool(x, attn_mask)
+    # dropout is a no-op at eval time, so Σα=1 is restored
+    assert torch.allclose(alpha_eval.sum(dim=1), torch.ones(B), atol=1e-6)
 

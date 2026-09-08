@@ -34,14 +34,16 @@ class AttentionPooling(nn.Module):
     """Content-based pooling trên trục L. Thay {Interpolate + linear1}.
     Length-agnostic: [B,L,H] → [B,H] kèm α [B,L] = điểm quan trọng mỗi token."""
 
-    def __init__(self, hidden):
+    def __init__(self, hidden, dropout=0.2):
         super().__init__()
         self.score = nn.Linear(hidden, 1, bias=False)   # weight: [1, hidden]
+        self.attn_dropout = nn.Dropout(dropout)   # regularize α; no-op in eval, Σα=1 still holds at inference
 
     def forward(self, x, attn_mask):           # x:[B,L,H]; attn_mask:[B,L] (1=valid, 0=pad/SOS)
         scores = self.score(x).squeeze(-1)                  # [B, L]
         scores = scores.masked_fill(attn_mask == 0, float("-inf"))
         alpha  = torch.softmax(scores, dim=1)               # [B, L]
+        alpha  = self.attn_dropout(alpha)
         pooled = (alpha.unsqueeze(-1) * x).sum(dim=1)   # [B,L,1] * [B,L,H] → [B,L,H] → sum L → [B,H]
         return pooled, alpha
 
@@ -73,7 +75,7 @@ class LogBertClassifier(nn.Module):
                          n_layers=cfg.layers, attn_heads=cfg.attn_heads, dropout=cfg.dropout,
                          is_logkey=True, is_time=False, is_device=cfg.is_device,
                          num_devices=cfg.num_devices, causal=cfg.causal)
-        self.pool = AttentionPooling(cfg.hidden)
+        self.pool = AttentionPooling(cfg.hidden, dropout=cfg.dropout)
         self.dropout = nn.Dropout(cfg.dropout)
         self.cls_head = nn.Linear(cfg.hidden, cfg.num_labels)
         self.causal_lm_head = CausalLogModel(cfg.hidden, cfg.vocab_size) if cfg.use_causal_lm else None
@@ -84,7 +86,7 @@ class LogBertClassifier(nn.Module):
         # NOTE: this intentionally overwrites ClassifierHead.linear1's constant init,
         # exactly as the old post_init did.
         self.apply(self._init_weights)
-        self.pool.init_as_avg_pooling()
+        # self.pool.init_as_avg_pooling()
 
     @staticmethod
     def _init_weights(module):
