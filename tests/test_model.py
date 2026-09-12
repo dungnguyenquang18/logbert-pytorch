@@ -26,7 +26,7 @@ def make_batch(B=4, L=20, vocab=30):
 
 def test_forward_returns_all_components():
     m = LogBertClassifier(small_cfg())
-    m.eval()  # attn_dropout must be off for the exact Σα=1 check below
+    m.eval()  # attn_dropout must be off for the exact pooling identity below
     batch = make_batch()
     out = m(**batch)
     assert out["logits"].shape == (4, 2)
@@ -36,11 +36,9 @@ def test_forward_returns_all_components():
     expected = out["loss_cls"] + 0.1 * out["loss_causal"]
     assert torch.allclose(out["loss"], expected, atol=1e-6)
 
-    # attn_weights validation
+    # attn_weights validation — s_t thô, KHÔNG chuẩn hoá (không còn Σα=1)
     alpha = out["attn_weights"]
     assert alpha.shape == (4, 20)
-    # sum of weights on valid tokens should be 1
-    assert torch.allclose(alpha.sum(dim=1), torch.ones(4), atol=1e-6)
     # weights on SOS and pad (<=0 in input_ids) should be 0
     mask = (batch["input_ids"] > 0).float()
     mask[:, 0] = 0
@@ -82,31 +80,68 @@ def test_backward_flows():
     assert len(grads) > 0
 
 
-def test_attention_pooling_init_as_avg_pooling():
+def test_attention_pooling_masks_pad_and_sos():
+    """pad/SOS phải đóng góp đúng 0. Không phải phòng thủ thừa: LogCollator pad
+    tới chuỗi dài nhất TRONG BATCH, nên pad lọt vào tổng ⇒ cùng một chuỗi cho
+    pooled khác nhau tuỳ thành phần batch."""
     from logbert.model import AttentionPooling
     torch.manual_seed(42)
     B, L, H = 2, 5, 8
     x = torch.randn(B, L, H)
-    
-    # input_ids: [ [SOS, w1, w2, pad, pad], [SOS, w1, w2, w3, pad] ]
     input_ids = torch.tensor([
         [3, 5, 6, 0, 0],
-        [3, 7, 8, 9, 0]
+        [3, 7, 8, 9, 0],
     ])
     attn_mask = (input_ids > 0).float()
     attn_mask[:, 0] = 0  # drop SOS
-    
-    pool = AttentionPooling(H)
-    pool.init_as_avg_pooling()
-    pool.eval()  # attn_dropout must be off for the exact avg-pooling equality check below
 
+    pool = AttentionPooling(H)
+    pool.eval()
     pooled, alpha = pool(x, attn_mask)
-    
-    expected_alpha = attn_mask / attn_mask.sum(dim=1, keepdim=True)
-    expected_pooled = torch.einsum("bl,blh->bh", expected_alpha, x)
-    
-    assert torch.allclose(alpha, expected_alpha, atol=1e-6)
-    assert torch.allclose(pooled, expected_pooled, atol=1e-6)
+
+    assert torch.allclose(alpha * (1 - attn_mask), torch.zeros_like(alpha), atol=1e-6)
+    # pooled = Σ_t s_t·h_t — đẳng thức chính xác, nền tảng của phân rã RCA
+    assert torch.allclose(pooled, torch.einsum("bl,blh->bh", alpha, x), atol=1e-6)
+    # và KHÔNG còn Σα=1
+    assert not torch.allclose(alpha.sum(dim=1), torch.ones(B), atol=1e-3)
+
+
+def test_attention_pooling_bias_is_live():
+    """Dưới softmax, bias vô hướng là no-op tuyệt đối (gradient đúng bằng 0).
+    Bỏ softmax rồi nó mới có tác dụng: pooled += b·Σ_t h_t."""
+    from logbert.model import AttentionPooling
+    torch.manual_seed(0)
+    B, L, H = 2, 6, 8
+    x = torch.randn(B, L, H)
+    attn_mask = torch.ones(B, L)
+
+    pool = AttentionPooling(H)
+    pool.eval()
+    pooled_a, _ = pool(x, attn_mask)
+    with torch.no_grad():
+        pool.score.bias += 1.0
+    pooled_b, _ = pool(x, attn_mask)
+
+    assert torch.allclose(pooled_b - pooled_a, x.sum(dim=1), atol=1e-5)
+
+
+def test_sign_gauge_symmetry_of_score_and_cls_head():
+    """Lật dấu (score, cls_head.weight) cho ra ĐÚNG cùng một hàm số ⇒ dấu của
+    s_t không khả định danh. Đây là cơ sở toán học để báo cáo |ρ| thay vì ρ,
+    giống ClassifierHead {linear1, linear2} của ART v1. Softmax phá đối xứng
+    này (α ≥ 0 không lật được) — nên v1 báo cáo |ρ| là hợp lệ."""
+    m = LogBertClassifier(small_cfg(use_causal_lm=False))
+    m.eval()
+    batch = make_batch()
+    logits_before = m(input_ids=batch["input_ids"], device_ids=batch["device_ids"])["logits"]
+
+    with torch.no_grad():
+        m.pool.score.weight.neg_()
+        m.pool.score.bias.neg_()
+        m.cls_head.weight.neg_()   # cls_head.bias giữ nguyên
+
+    logits_after = m(input_ids=batch["input_ids"], device_ids=batch["device_ids"])["logits"]
+    assert torch.allclose(logits_before, logits_after, atol=1e-5)
 
 
 def test_attention_pooling_dropout_active_in_train_mode():
@@ -118,12 +153,10 @@ def test_attention_pooling_dropout_active_in_train_mode():
 
     pool = AttentionPooling(H, dropout=0.5)
     pool.train()
-    _, alpha = pool(x, attn_mask)
-    # attn_dropout zeroes some weights at train time, so Σα drifts from 1
-    assert not torch.allclose(alpha.sum(dim=1), torch.ones(B), atol=1e-6)
+    _, alpha_train = pool(x, attn_mask)
+    assert (alpha_train == 0).any()   # dropout zeroes some scores at train time
 
     pool.eval()
     _, alpha_eval = pool(x, attn_mask)
-    # dropout is a no-op at eval time, so Σα=1 is restored
-    assert torch.allclose(alpha_eval.sum(dim=1), torch.ones(B), atol=1e-6)
+    assert not (alpha_eval == 0).any()   # no-op at eval
 

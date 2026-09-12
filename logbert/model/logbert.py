@@ -32,23 +32,39 @@ class BERT(nn.Module):
 
 class AttentionPooling(nn.Module):
     """Content-based pooling trên trục L. Thay {Interpolate + linear1}.
-    Length-agnostic: [B,L,H] → [B,H] kèm α [B,L] = điểm quan trọng mỗi token."""
+
+    KHÔNG chuẩn hoá (bỏ softmax): pooled = Σ_t s_t·h_t, với s_t = w·h_t + b.
+    Ba hệ quả có chủ đích:
+
+    1. Ngữ nghĩa TỔNG chứ không phải trung bình — log volume đi thẳng vào
+       ‖pooled‖. Với NOC, volume spike là chỉ báo sự cố thật, không phải nhiễu
+       cần khử. (Softmax ép Σα=1 nên chỉ đọc được *thành phần*, bỏ mất *khối lượng*.)
+    2. s_t CÓ DẤU ⇒ cặp (score, cls_head) có gauge tự do: lật dấu cả hai cho ra
+       đúng cùng một hàm số. Nên dấu của tương quan giữa s_t và thống kê ngoài
+       KHÔNG khả định danh — chỉ |ρ| là đại lượng xác định, đúng như
+       ClassifierHead {linear1, linear2} của DeviceIncidents. Đại lượng RCA bất
+       biến gauge là c_t = s_t · g(h_t), g(h_t) = (cls_head.weight[1] -
+       cls_head.weight[0])·h_t, thoả Σ_t c_t + const = logit[1] - logit[0].
+    3. b (bias) điều khiển tỉ lệ trộn sum-pooling thuần: pooled = Σ_t (w·h_t)·h_t
+       + b·Σ_t h_t. Dưới softmax thì bias vô hướng là no-op tuyệt đối (gradient
+       đúng bằng 0); bỏ softmax rồi nó mới có tác dụng.
+
+    attn_mask nhân vào s_t là BẮT BUỘC, không phải phòng thủ thừa: LogCollator
+    pad tới chuỗi dài nhất *trong batch*, nên nếu pad lọt vào tổng thì cùng một
+    chuỗi sẽ cho pooled khác nhau tuỳ thành phần batch.
+    """
 
     def __init__(self, hidden, dropout=0.2):
         super().__init__()
-        self.score = nn.Linear(hidden, 1, bias=False)   # weight: [1, hidden]
-        self.attn_dropout = nn.Dropout(dropout)   # regularize α; no-op in eval, Σα=1 still holds at inference
+        self.score = nn.Linear(hidden, 1, bias=True)   # weight: [1, hidden], bias: [1]
+        self.attn_dropout = nn.Dropout(dropout)   # regularize s_t; no-op in eval
 
     def forward(self, x, attn_mask):           # x:[B,L,H]; attn_mask:[B,L] (1=valid, 0=pad/SOS)
         scores = self.score(x).squeeze(-1)                  # [B, L]
-        scores = scores.masked_fill(attn_mask == 0, float("-inf"))
-        alpha  = torch.softmax(scores, dim=1)               # [B, L]
+        alpha  = scores * attn_mask                         # pad/SOS đóng góp đúng 0
         alpha  = self.attn_dropout(alpha)
         pooled = (alpha.unsqueeze(-1) * x).sum(dim=1)   # [B,L,1] * [B,L,H] → [B,L,H] → sum L → [B,H]
         return pooled, alpha
-
-    def init_as_avg_pooling(self):
-        nn.init.zeros_(self.score.weight)   # score ≡ 0 → softmax đều → average pooling ở step 0
 
 
 class CausalLogModel(nn.Module):
@@ -86,7 +102,6 @@ class LogBertClassifier(nn.Module):
         # NOTE: this intentionally overwrites ClassifierHead.linear1's constant init,
         # exactly as the old post_init did.
         self.apply(self._init_weights)
-        # self.pool.init_as_avg_pooling()
 
     @staticmethod
     def _init_weights(module):
