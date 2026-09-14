@@ -31,46 +31,31 @@ class BERT(nn.Module):
 
 
 class AttentionPooling(nn.Module):
-    """Content-based pooling trên trục L. Thay {Interpolate + linear1}.
+    """Content-based pooling trên trục L không chuẩn hoá (bỏ softmax).
 
-    KHÔNG chuẩn hoá (bỏ softmax): pooled = Σ_t s_t·h_t, với s_t = w·h_t + b.
-    Ba hệ quả có chủ đích:
-
-    1. Ngữ nghĩa TỔNG chứ không phải trung bình — log volume đi thẳng vào
-       ‖pooled‖. Với NOC, volume spike là chỉ báo sự cố thật, không phải nhiễu
-       cần khử. (Softmax ép Σα=1 nên chỉ đọc được *thành phần*, bỏ mất *khối lượng*.)
-    2. s_t CÓ DẤU ⇒ cặp (score, cls_head) có gauge tự do: lật dấu cả hai cho ra
-       đúng cùng một hàm số. Nên dấu của tương quan giữa s_t và thống kê ngoài
-       KHÔNG khả định danh — chỉ |ρ| là đại lượng xác định, đúng như
-       ClassifierHead {linear1, linear2} của DeviceIncidents. Đại lượng RCA bất
-       biến gauge là c_t = s_t · g(h_t), g(h_t) = (cls_head.weight[1] -
-       cls_head.weight[0])·h_t, thoả Σ_t c_t + const = logit[1] - logit[0].
-    3. b (bias) điều khiển tỉ lệ trộn sum-pooling thuần: pooled = Σ_t (w·h_t)·h_t
-       + b·Σ_t h_t. Dưới softmax thì bias vô hướng là no-op tuyệt đối (gradient
-       đúng bằng 0); bỏ softmax rồi nó mới có tác dụng.
-
-    attn_mask nhân vào s_t là BẮT BUỘC, không phải phòng thủ thừa: LogCollator
-    pad tới chuỗi dài nhất *trong batch*, nên nếu pad lọt vào tổng thì cùng một
-    chuỗi sẽ cho pooled khác nhau tuỳ thành phần batch.
+    s_t = w · Dropout(h_t) + b
+    pooled = Σ_t (s_t · attn_mask)_t · h_t
     """
 
     def __init__(self, hidden, dropout=0.2):
         super().__init__()
-        self.score = nn.Linear(hidden, 1, bias=True)   # weight: [1, hidden], bias: [1]
-        self.attn_dropout = nn.Dropout(dropout)   # regularize s_t; no-op in eval
+        self.feat_dropout = nn.Dropout(dropout)         # Áp dụng lên biểu diễn đặc trưng
+        self.score = nn.Linear(hidden, 1, bias=True)    # weight: [1, hidden], bias: [1]
 
-    def forward(self, x, attn_mask):           # x:[B,L,H]; attn_mask:[B,L] (1=valid, 0=pad/SOS)
-        scores = self.score(x).squeeze(-1)                  # [B, L]
-        alpha  = scores * attn_mask                         # pad/SOS đóng góp đúng 0
-        alpha  = self.attn_dropout(alpha)
-        pooled = (alpha.unsqueeze(-1) * x).sum(dim=1)   # [B,L,1] * [B,L,H] → [B,L,H] → sum L → [B,H]
+    def forward(self, x, attn_mask):                    # x: [B, L, H]; attn_mask: [B, L]
+        # Regularize đặc trưng trước khi chiếu thành scalar score
+        x_dropped = self.feat_dropout(x)
+        scores = self.score(x_dropped).squeeze(-1)      # [B, L]
+        
+        # Triệt tiêu pad/SOS về 0
+        alpha = scores * attn_mask                      # [B, L]
+        pooled = (alpha.unsqueeze(-1) * x).sum(dim=1)   # [B, H]
+        
         return pooled, alpha
 
 
 class CausalLogModel(nn.Module):
-    """Next-log prediction head. Combined with causal attention (BERT's
-    causal=True), this makes loss_causal a standard autoregressive LM loss,
-    not a bidirectional masked-LM loss."""
+    """Next-log prediction head."""
     def __init__(self, hidden, vocab_size):
         super().__init__()
         self.linear = nn.Linear(hidden, vocab_size)
@@ -81,8 +66,7 @@ class CausalLogModel(nn.Module):
 
 
 class LogBertClassifier(nn.Module):
-    """Top-level model. Replaces HF LogBertForSequenceClassification;
-    forward returns a plain dict instead of SequenceClassifierOutput."""
+    """Top-level model for sequence classification."""
 
     def __init__(self, cfg: ModelConfig):
         super().__init__()
@@ -98,9 +82,7 @@ class LogBertClassifier(nn.Module):
         self.register_buffer("class_weight", None)
         self.loss_fn = nn.CrossEntropyLoss(reduction="mean")
         self.causal_loss_fn = nn.NLLLoss(ignore_index=0)
-        # Same init the HF post_init applied: normal(0, 0.02) on Linear/Embedding, zero bias.
-        # NOTE: this intentionally overwrites ClassifierHead.linear1's constant init,
-        # exactly as the old post_init did.
+        
         self.apply(self._init_weights)
 
     @staticmethod
@@ -120,7 +102,7 @@ class LogBertClassifier(nn.Module):
         x = self.bert(input_ids, device_info=device_ids)          # [B, L, H]
 
         attn_mask = (input_ids > 0).float()
-        attn_mask[:, 0] = 0                                        # drop SOS position
+        attn_mask[:, 0] = 0                                       # drop SOS position
         pooled, alpha = self.pool(x, attn_mask)
         logits = self.cls_head(self.dropout(pooled))
 
@@ -132,6 +114,7 @@ class LogBertClassifier(nn.Module):
             else:
                 loss_cls = self.loss_fn(logits, labels)
             loss = loss_cls
+
         if self.causal_lm_head is not None and causal_labels is not None:
             valid = causal_labels != self.causal_loss_fn.ignore_index
             if valid.any():
@@ -140,6 +123,10 @@ class LogBertClassifier(nn.Module):
                 loss_causal = x.new_zeros(())
             loss = loss_causal if loss is None else loss + self.cfg.alpha_causal_lm * loss_causal
 
-        return {"logits": logits, "loss": loss,
-                "loss_cls": loss_cls, "loss_causal": loss_causal, "attn_weights": alpha}
-
+        return {
+            "logits": logits,
+            "loss": loss,
+            "loss_cls": loss_cls,
+            "loss_causal": loss_causal,
+            "attn_weights": alpha
+        }
